@@ -1,248 +1,228 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>3D FPS Game - Neocities Friendly</title>
-  <style>
-    body, html {
-      margin: 0; padding: 0; overflow: hidden; height: 100%;
-      background: #87ceeb;
-      font-family: Arial, sans-serif;
-    }
-    #overlay {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      font-size: 2em;
-      cursor: pointer;
-      user-select: none;
-      z-index: 10000;
-    }
-    canvas { display: block; }
-  </style>
+<meta charset="UTF-8" />
+<title>3D Car Driving Game - Three.js</title>
+<style>
+  body, html {
+    margin: 0; padding: 0; overflow: hidden; height: 100%;
+    background: #87ceeb;
+    font-family: Arial, sans-serif;
+  }
+  #overlay {
+    position: fixed;
+    top:0; left:0; right:0; bottom:0;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 2em;
+    cursor: pointer;
+    user-select: none;
+    z-index: 10000;
+  }
+  canvas { display: block; }
+</style>
 </head>
 <body>
-  <div id="overlay">Click anywhere to start</div>
+<div id="overlay">Click to start driving</div>
 
-  <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/examples/js/controls/PointerLockControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.153.0/examples/js/controls/PointerLockControls.js"></script>
 
-  <script>
+<script>
+  let scene, camera, renderer;
+  let car, wheels = [];
+  let velocity = 0;
+  let maxSpeed = 0.15;
+  let acceleration = 0.002;
+  let braking = 0.005;
+  let friction = 0.001;
+  let steeringAngle = 0;
+  let maxSteering = 0.04;
+  let steeringSpeed = 0.002;
+  let moveForward = false, moveBackward = false, turnLeft = false, turnRight = false;
+  let controlsLocked = false;
+
+  const clock = new THREE.Clock();
+
+  init();
+
+  function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+
+    // Lights
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444);
+    hemiLight.position.set(0, 20, 0);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(5, 10, 7);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
+
+    // Ground
+    const groundGeo = new THREE.PlaneGeometry(200, 200);
+    const groundMat = new THREE.MeshPhongMaterial({color: 0x555555});
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI/2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Obstacles
+    const obsGeo = new THREE.BoxGeometry(4, 4, 4);
+    const obsMat = new THREE.MeshPhongMaterial({color: 0x880000});
+    for(let i=0; i<20; i++) {
+      let obs = new THREE.Mesh(obsGeo, obsMat);
+      obs.position.set((Math.random()-0.5)*180, 2, (Math.random()-0.5)*180);
+      obs.castShadow = true;
+      scene.add(obs);
+    }
+
+    // Car chassis
+    const chassisGeo = new THREE.BoxGeometry(4, 1.2, 8);
+    const chassisMat = new THREE.MeshPhongMaterial({color: 0x0000ff});
+    car = new THREE.Mesh(chassisGeo, chassisMat);
+    car.castShadow = true;
+    car.position.y = 1;
+    scene.add(car);
+
+    // Wheels (simple cylinders)
+    const wheelGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.5, 16);
+    const wheelMat = new THREE.MeshPhongMaterial({color: 0x222222});
+    const wheelPositions = [
+      [-1.5, 0.4, 3],  // Front left
+      [1.5, 0.4, 3],   // Front right
+      [-1.5, 0.4, -3], // Rear left
+      [1.5, 0.4, -3],  // Rear right
+    ];
+
+    for(let pos of wheelPositions) {
+      let wheel = new THREE.Mesh(wheelGeo, wheelMat);
+      wheel.rotation.z = Math.PI/2;
+      wheel.position.set(pos[0], pos[1], pos[2]);
+      wheel.castShadow = true;
+      car.add(wheel);
+      wheels.push(wheel);
+    }
+
+    // Camera offset behind car
+    camera.position.set(0, 5, -12);
+    camera.lookAt(car.position);
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({antialias:true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // Overlay & controls
     const overlay = document.getElementById('overlay');
-
-    let camera, scene, renderer, controls;
-    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-    let canJump = false;
-    let velocity = new THREE.Vector3();
-    let direction = new THREE.Vector3();
-    const npcs = [];
-    const clock = new THREE.Clock();
-
-    init();
-
-    function init() {
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x87ceeb);
-
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 2, 5);
-
-      const light = new THREE.HemisphereLight(0xffffff, 0x444444);
-      light.position.set(0, 20, 0);
-      scene.add(light);
-
-      const dirLight = new THREE.DirectionalLight(0xffffff);
-      dirLight.position.set(3, 10, 10);
-      scene.add(dirLight);
-
-      // Ground
-      const groundGeometry = new THREE.PlaneGeometry(100, 100);
-      const groundMaterial = new THREE.MeshPhongMaterial({ color: 0x333333 });
-      const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-      ground.rotation.x = - Math.PI / 2;
-      ground.receiveShadow = true;
-      scene.add(ground);
-
-      // Grid helper for visual reference
-      const gridHelper = new THREE.GridHelper(100, 50, 0x444444, 0x888888);
-      scene.add(gridHelper);
-
-      // NPCs
-      const npcGeometry = new THREE.BoxGeometry(1, 2, 1);
-      const npcMaterial = new THREE.MeshPhongMaterial({ color: 0xff4444 });
-      for(let i = 0; i < 5; i++) {
-        let npc = new THREE.Mesh(npcGeometry, npcMaterial.clone());
-        npc.position.set(
-          (Math.random() - 0.5) * 40,
-          1,
-          (Math.random() - 0.5) * 40
-        );
-        npc.userData.velocity = new THREE.Vector3();
-        npc.userData.alive = true;
-        scene.add(npc);
-        npcs.push(npc);
-      }
-
-      renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      document.body.appendChild(renderer.domElement);
-
-      controls = new THREE.PointerLockControls(camera, document.body);
-      scene.add(controls.getObject());
-
-      // Activate pointer lock on clicking anywhere on the body
-      document.body.addEventListener('click', () => {
-        if (!controls.isLocked) {
-          controls.lock();
-        }
-      });
-
-      // Show/hide overlay based on pointer lock status
-      controls.addEventListener('lock', () => {
+    overlay.addEventListener('click', () => {
+      if (!controlsLocked) {
+        controlsLocked = true;
         overlay.style.display = 'none';
+      }
+    });
+
+    // Controls
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+
+    window.addEventListener('resize', onWindowResize);
+
+    animate();
+  }
+
+  function onKeyDown(e) {
+    switch(e.code) {
+      case 'KeyW': moveForward = true; break;
+      case 'KeyS': moveBackward = true; break;
+      case 'KeyA': turnLeft = true; break;
+      case 'KeyD': turnRight = true; break;
+    }
+  }
+
+  function onKeyUp(e) {
+    switch(e.code) {
+      case 'KeyW': moveForward = false; break;
+      case 'KeyS': moveBackward = false; break;
+      case 'KeyA': turnLeft = false; break;
+      case 'KeyD': turnRight = false; break;
+    }
+  }
+
+  function onWindowResize() {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    if(controlsLocked) {
+      const delta = clock.getDelta();
+
+      // Acceleration/braking
+      if(moveForward) velocity += acceleration;
+      else if(moveBackward) velocity -= braking;
+      else {
+        // friction slows car down when no input
+        if(velocity > 0) velocity -= friction;
+        else if(velocity < 0) velocity += friction;
+      }
+
+      // Clamp velocity
+      if(velocity > maxSpeed) velocity = maxSpeed;
+      if(velocity < -maxSpeed/2) velocity = -maxSpeed/2;
+
+      // Steering
+      if(turnLeft) steeringAngle += steeringSpeed;
+      else if(turnRight) steeringAngle -= steeringSpeed;
+      else {
+        // Return steering to center gradually
+        steeringAngle *= 0.9;
+      }
+
+      if(steeringAngle > maxSteering) steeringAngle = maxSteering;
+      if(steeringAngle < -maxSteering) steeringAngle = -maxSteering;
+
+      // Update car rotation and position
+      car.rotation.y += steeringAngle * velocity * 5;  // Turning speed depends on velocity
+
+      // Calculate forward vector
+      const forward = new THREE.Vector3(
+        Math.sin(car.rotation.y),
+        0,
+        Math.cos(car.rotation.y)
+      );
+
+      // Move car forward/backward
+      car.position.add(forward.multiplyScalar(velocity));
+
+      // Rotate front wheels according to steering angle
+      wheels[0].rotation.y = steeringAngle * 5; // Front left wheel
+      wheels[1].rotation.y = steeringAngle * 5; // Front right wheel
+
+      // Rotate wheels to simulate rolling
+      wheels.forEach(wheel => {
+        wheel.rotation.x -= velocity * 20;
       });
 
-      controls.addEventListener('unlock', () => {
-        overlay.style.display = 'flex';
-      });
-
-      document.addEventListener('keydown', onKeyDown);
-      document.addEventListener('keyup', onKeyUp);
-      document.addEventListener('mousedown', onMouseDown);
-
-      // Gun
-      const gunGeometry = new THREE.BoxGeometry(0.3, 0.15, 1);
-      const gunMaterial = new THREE.MeshBasicMaterial({ color: 0x222222 });
-      const gun = new THREE.Mesh(gunGeometry, gunMaterial);
-      gun.position.set(0.3, -0.2, -1);
-      camera.add(gun);
-
-      window.addEventListener('resize', onWindowResize);
-      animate();
+      // Camera follow
+      const camOffset = new THREE.Vector3(0, 5, -12);
+      camOffset.applyAxisAngle(new THREE.Vector3(0,1,0), car.rotation.y);
+      camera.position.copy(car.position).add(camOffset);
+      camera.lookAt(car.position);
     }
 
-    function onKeyDown(event) {
-      switch (event.code) {
-        case 'ArrowUp':
-        case 'KeyW':
-          moveForward = true;
-          break;
-        case 'ArrowLeft':
-        case 'KeyA':
-          moveLeft = true;
-          break;
-        case 'ArrowDown':
-        case 'KeyS':
-          moveBackward = true;
-          break;
-        case 'ArrowRight':
-        case 'KeyD':
-          moveRight = true;
-          break;
-        case 'Space':
-          if (canJump) velocity.y += 8;
-          canJump = false;
-          break;
-      }
-    }
-
-    function onKeyUp(event) {
-      switch (event.code) {
-        case 'ArrowUp':
-        case 'KeyW':
-          moveForward = false;
-          break;
-        case 'ArrowLeft':
-        case 'KeyA':
-          moveLeft = false;
-          break;
-        case 'ArrowDown':
-        case 'KeyS':
-          moveBackward = false;
-          break;
-        case 'ArrowRight':
-        case 'KeyD':
-          moveRight = false;
-          break;
-      }
-    }
-
-    function onMouseDown(event) {
-      if (event.button === 0 && controls.isLocked) {
-        shoot();
-      }
-    }
-
-    function shoot() {
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-      const intersects = raycaster.intersectObjects(npcs.filter(n => n.userData.alive));
-
-      if (intersects.length > 0) {
-        const hitNpc = intersects[0].object;
-        hitNpc.userData.alive = false;
-        hitNpc.material.color.set(0x333333);
-        const knockback = new THREE.Vector3();
-        camera.getWorldDirection(knockback);
-        knockback.multiplyScalar(0.2);
-        hitNpc.userData.velocity.copy(knockback);
-        hitNpc.userData.velocity.y = 0.1;
-      }
-    }
-
-    function onWindowResize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    function animate() {
-      requestAnimationFrame(animate);
-
-      if (controls.isLocked) {
-        const delta = clock.getDelta();
-
-        velocity.x -= velocity.x * 10.0 * delta;
-        velocity.z -= velocity.z * 10.0 * delta;
-
-        velocity.y -= 9.8 * 10.0 * delta;
-
-        direction.z = Number(moveForward) - Number(moveBackward);
-        direction.x = Number(moveRight) - Number(moveLeft);
-        direction.normalize();
-
-        if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
-        if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
-
-        controls.moveRight(-velocity.x * delta);
-        controls.moveForward(-velocity.z * delta);
-
-        controls.getObject().position.y += velocity.y * delta;
-
-        if (controls.getObject().position.y < 1.5) {
-          velocity.y = 0;
-          controls.getObject().position.y = 1.5;
-          canJump = true;
-        }
-
-        npcs.forEach(npc => {
-          if (!npc.userData.alive) {
-            npc.position.add(npc.userData.velocity);
-            npc.userData.velocity.multiplyScalar(0.9);
-            npc.position.y -= 0.01;
-
-            if (npc.position.y < 0) npc.position.y = 0;
-          }
-        });
-      }
-
-      renderer.render(scene, camera);
-    }
-  </script>
+    renderer.render(scene, camera);
+  }
+</script>
 </body>
 </html>
