@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>3D Car Driving Game - Three.js</title>
+<title>Basic FPS Prototype</title>
 <style>
   body, html {
     margin: 0; padding: 0; overflow: hidden; height: 100%;
@@ -22,30 +22,43 @@
     user-select: none;
     z-index: 10000;
   }
-  canvas { display: block; }
+  #hud {
+    position: fixed;
+    top: 10px; left: 10px;
+    color: white;
+    font-size: 1.2em;
+    z-index: 10001;
+  }
 </style>
 </head>
 <body>
-<div id="overlay">Click to start driving</div>
+<div id="overlay">Click to start</div>
+<div id="hud">Weapon: Pistol (Press 1-3 to switch)</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.153.0/examples/js/controls/PointerLockControls.js"></script>
 
 <script>
-  let scene, camera, renderer;
-  let car, wheels = [];
-  let velocity = 0;
-  let maxSpeed = 0.15;
-  let acceleration = 0.002;
-  let braking = 0.005;
-  let friction = 0.001;
-  let steeringAngle = 0;
-  let maxSteering = 0.04;
-  let steeringSpeed = 0.002;
-  let moveForward = false, moveBackward = false, turnLeft = false, turnRight = false;
-  let controlsLocked = false;
+  const overlay = document.getElementById('overlay');
+  const hud = document.getElementById('hud');
 
+  let scene, camera, renderer, controls;
+  let velocity = new THREE.Vector3();
+  let direction = new THREE.Vector3();
+  let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+  let canJump = false;
   const clock = new THREE.Clock();
+
+  // Weapons: pistol, AR, grenade
+  const weapons = [
+    {name: "Pistol", fireRate: 500, damage: 20},
+    {name: "AR", fireRate: 200, damage: 10},
+    {name: "Grenade", fireRate: 1000, damage: 50}
+  ];
+  let currentWeapon = 0;
+  let lastShotTime = 0;
+
+  const npcs = [];
 
   init();
 
@@ -54,105 +67,157 @@
     scene.background = new THREE.Color(0x87ceeb);
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 2, 5);
 
     // Lights
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444);
     hemiLight.position.set(0, 20, 0);
     scene.add(hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(5, 10, 7);
-    dirLight.castShadow = true;
+    const dirLight = new THREE.DirectionalLight(0xffffff);
+    dirLight.position.set(3, 10, 10);
     scene.add(dirLight);
 
     // Ground
-    const groundGeo = new THREE.PlaneGeometry(200, 200);
-    const groundMat = new THREE.MeshPhongMaterial({color: 0x555555});
+    const groundGeo = new THREE.PlaneGeometry(100, 100);
+    const groundMat = new THREE.MeshPhongMaterial({color: 0x444444});
     const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.rotation.x = -Math.PI/2;
+    ground.rotation.x = - Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Obstacles
-    const obsGeo = new THREE.BoxGeometry(4, 4, 4);
-    const obsMat = new THREE.MeshPhongMaterial({color: 0x880000});
-    for(let i=0; i<20; i++) {
-      let obs = new THREE.Mesh(obsGeo, obsMat);
-      obs.position.set((Math.random()-0.5)*180, 2, (Math.random()-0.5)*180);
-      obs.castShadow = true;
-      scene.add(obs);
+    // Obstacles (boxes)
+    const boxGeo = new THREE.BoxGeometry(2, 2, 2);
+    const boxMat = new THREE.MeshPhongMaterial({color: 0x888888});
+    for(let i=0; i<10; i++) {
+      let box = new THREE.Mesh(boxGeo, boxMat);
+      box.position.set((Math.random()-0.5)*80,1, (Math.random()-0.5)*80);
+      box.castShadow = true;
+      scene.add(box);
     }
 
-    // Car chassis
-    const chassisGeo = new THREE.BoxGeometry(4, 1.2, 8);
-    const chassisMat = new THREE.MeshPhongMaterial({color: 0x0000ff});
-    car = new THREE.Mesh(chassisGeo, chassisMat);
-    car.castShadow = true;
-    car.position.y = 1;
-    scene.add(car);
-
-    // Wheels (simple cylinders)
-    const wheelGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.5, 16);
-    const wheelMat = new THREE.MeshPhongMaterial({color: 0x222222});
-    const wheelPositions = [
-      [-1.5, 0.4, 3],  // Front left
-      [1.5, 0.4, 3],   // Front right
-      [-1.5, 0.4, -3], // Rear left
-      [1.5, 0.4, -3],  // Rear right
-    ];
-
-    for(let pos of wheelPositions) {
-      let wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.rotation.z = Math.PI/2;
-      wheel.position.set(pos[0], pos[1], pos[2]);
-      wheel.castShadow = true;
-      car.add(wheel);
-      wheels.push(wheel);
+    // NPCs (red cubes)
+    const npcGeo = new THREE.BoxGeometry(1, 2, 1);
+    const npcMat = new THREE.MeshPhongMaterial({color: 0xff4444});
+    for(let i=0; i<5; i++) {
+      let npc = new THREE.Mesh(npcGeo, npcMat.clone());
+      npc.position.set((Math.random()-0.5)*80, 1, (Math.random()-0.5)*80);
+      npc.userData.alive = true;
+      scene.add(npc);
+      npcs.push(npc);
     }
 
-    // Camera offset behind car
-    camera.position.set(0, 5, -12);
-    camera.lookAt(car.position);
-
-    // Renderer
     renderer = new THREE.WebGLRenderer({antialias:true});
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = true;
     document.body.appendChild(renderer.domElement);
 
-    // Overlay & controls
-    const overlay = document.getElementById('overlay');
-    overlay.addEventListener('click', () => {
-      if (!controlsLocked) {
-        controlsLocked = true;
-        overlay.style.display = 'none';
-      }
+    controls = new THREE.PointerLockControls(camera, document.body);
+    scene.add(controls.getObject());
+
+    // Pointer lock overlay logic
+    document.body.addEventListener('click', () => {
+      if(!controls.isLocked) controls.lock();
     });
 
-    // Controls
+    controls.addEventListener('lock', () => {
+      overlay.style.display = 'none';
+    });
+    controls.addEventListener('unlock', () => {
+      overlay.style.display = 'flex';
+    });
+
+    // Movement controls
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
-
+    document.addEventListener('mousedown', onMouseDown);
     window.addEventListener('resize', onWindowResize);
+    document.addEventListener('keypress', onKeyPress);
 
     animate();
   }
 
+  function onKeyPress(e) {
+    // Switch weapons with keys 1,2,3
+    if(e.key >= '1' && e.key <= '3') {
+      currentWeapon = e.key - '1';
+      hud.textContent = `Weapon: ${weapons[currentWeapon].name} (Press 1-3 to switch)`;
+    }
+  }
+
+  function onMouseDown(e) {
+    if(e.button === 0 && controls.isLocked) {
+      shoot();
+    }
+  }
+
+  function shoot() {
+    const now = performance.now();
+    if(now - lastShotTime < weapons[currentWeapon].fireRate) return; // fire rate limiter
+    lastShotTime = now;
+
+    // Raycast from center of screen
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+    // Check NPC hits
+    const hits = raycaster.intersectObjects(npcs.filter(n => n.userData.alive));
+    if(hits.length > 0) {
+      const npc = hits[0].object;
+      npc.userData.health = (npc.userData.health || 100) - weapons[currentWeapon].damage;
+      if(npc.userData.health <= 0) {
+        npc.userData.alive = false;
+        npc.material.color.set(0x333333);
+        // Simple ragdoll effect - fall down
+        npc.rotation.x = Math.PI / 2;
+      }
+    }
+
+    // TODO: Add grenade explosion if grenade selected
+  }
+
   function onKeyDown(e) {
     switch(e.code) {
-      case 'KeyW': moveForward = true; break;
-      case 'KeyS': moveBackward = true; break;
-      case 'KeyA': turnLeft = true; break;
-      case 'KeyD': turnRight = true; break;
+      case 'ArrowUp':
+      case 'KeyW':
+        moveForward = true;
+        break;
+      case 'ArrowLeft':
+      case 'KeyA':
+        moveLeft = true;
+        break;
+      case 'ArrowDown':
+      case 'KeyS':
+        moveBackward = true;
+        break;
+      case 'ArrowRight':
+      case 'KeyD':
+        moveRight = true;
+        break;
+      case 'Space':
+        if(canJump) velocity.y += 8;
+        canJump = false;
+        break;
     }
   }
 
   function onKeyUp(e) {
     switch(e.code) {
-      case 'KeyW': moveForward = false; break;
-      case 'KeyS': moveBackward = false; break;
-      case 'KeyA': turnLeft = false; break;
-      case 'KeyD': turnRight = false; break;
+      case 'ArrowUp':
+      case 'KeyW':
+        moveForward = false;
+        break;
+      case 'ArrowLeft':
+      case 'KeyA':
+        moveLeft = false;
+        break;
+      case 'ArrowDown':
+      case 'KeyS':
+        moveBackward = false;
+        break;
+      case 'ArrowRight':
+      case 'KeyD':
+        moveRight = false;
+        break;
     }
   }
 
@@ -165,60 +230,41 @@
   function animate() {
     requestAnimationFrame(animate);
 
-    if(controlsLocked) {
-      const delta = clock.getDelta();
+    const delta = clock.getDelta();
 
-      // Acceleration/braking
-      if(moveForward) velocity += acceleration;
-      else if(moveBackward) velocity -= braking;
-      else {
-        // friction slows car down when no input
-        if(velocity > 0) velocity -= friction;
-        else if(velocity < 0) velocity += friction;
+    if(controls.isLocked) {
+      velocity.x -= velocity.x * 10.0 * delta;
+      velocity.z -= velocity.z * 10.0 * delta;
+      velocity.y -= 9.8 * 10.0 * delta;
+
+      direction.z = Number(moveForward) - Number(moveBackward);
+      direction.x = Number(moveRight) - Number(moveLeft);
+      direction.normalize();
+
+      if(moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
+      if(moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+
+      controls.moveRight(-velocity.x * delta);
+      controls.moveForward(-velocity.z * delta);
+
+      controls.getObject().position.y += velocity.y * delta;
+
+      if(controls.getObject().position.y < 1.5) {
+        velocity.y = 0;
+        controls.getObject().position.y = 1.5;
+        canJump = true;
       }
 
-      // Clamp velocity
-      if(velocity > maxSpeed) velocity = maxSpeed;
-      if(velocity < -maxSpeed/2) velocity = -maxSpeed/2;
-
-      // Steering
-      if(turnLeft) steeringAngle += steeringSpeed;
-      else if(turnRight) steeringAngle -= steeringSpeed;
-      else {
-        // Return steering to center gradually
-        steeringAngle *= 0.9;
-      }
-
-      if(steeringAngle > maxSteering) steeringAngle = maxSteering;
-      if(steeringAngle < -maxSteering) steeringAngle = -maxSteering;
-
-      // Update car rotation and position
-      car.rotation.y += steeringAngle * velocity * 5;  // Turning speed depends on velocity
-
-      // Calculate forward vector
-      const forward = new THREE.Vector3(
-        Math.sin(car.rotation.y),
-        0,
-        Math.cos(car.rotation.y)
-      );
-
-      // Move car forward/backward
-      car.position.add(forward.multiplyScalar(velocity));
-
-      // Rotate front wheels according to steering angle
-      wheels[0].rotation.y = steeringAngle * 5; // Front left wheel
-      wheels[1].rotation.y = steeringAngle * 5; // Front right wheel
-
-      // Rotate wheels to simulate rolling
-      wheels.forEach(wheel => {
-        wheel.rotation.x -= velocity * 20;
+      // Basic NPC "ragdoll" fall on death
+      npcs.forEach(npc => {
+        if(!npc.userData.alive) {
+          npc.rotation.x += delta * 5;
+          if(npc.position.y > 0) {
+            npc.position.y -= delta * 3;
+            if(npc.position.y < 0) npc.position.y = 0;
+          }
+        }
       });
-
-      // Camera follow
-      const camOffset = new THREE.Vector3(0, 5, -12);
-      camOffset.applyAxisAngle(new THREE.Vector3(0,1,0), car.rotation.y);
-      camera.position.copy(car.position).add(camOffset);
-      camera.lookAt(car.position);
     }
 
     renderer.render(scene, camera);
